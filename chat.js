@@ -36,7 +36,6 @@ class ChatManager {
                 .from('messages')
                 .select('*')
                 .order('created_at', { ascending: true })
-                .limit(50);
 
             if (error) {
                 console.error('❌ Ошибка загрузки:', error);
