@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Twigram Resizable</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" href="Twigram.svg">
+</head>
+<body>
+    <div class="app-container">
+        <!-- 1. Левая узкая панель (Настройки) -->
+        <aside class="options-sidebar">
+            <!-- Иконки меню -->
+        </aside>
+        <!-- 2. Средняя панель (Список чатов) -->
+        <aside class="chat-list-panel" id="chatListPanel">
+            <div class="search-area">
+                <div class="search-panel">
+                    <input type="text" class="search-input" placeholder="Search">
+                </div>
+            </div>
+            <div class="chat-list-content">
+            </div>
+        </aside>
+        <div class="resize-handle" id="resizeHandle"></div>
+        <main class="active-chat-area">
+            <header class="chat-header"></header>
+            <div class="chat-messages-area"></div>
+            <footer class="message-input-panel">
+                <input type="text" class="message-input" placeholder="Message...">
+            </footer>
+        </main>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
