@@ -1,0 +1,256 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: sans-serif;
+    background-color: #000;
+    height: 100vh;
+    overflow: hidden;
+}
+
+.app-container {
+    display: flex;
+    width: 100%;
+    height: 100%;
+}
+
+/* --- 1. OPTIONS SIDEBAR --- */
+.options-sidebar {
+    width: 60px;
+    height: 100%;
+    background-color: #1A1A23;
+    flex-shrink: 0;
+}
+
+/* --- 2. CHAT LIST PANEL --- */
+.chat-list-panel {
+    width: 320px;
+    min-width: 200px;
+    max-width: 600px;
+    height: 100%;
+    background-color: #21212C;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    border-right: 1px solid #100C1C;
+    position: relative;
+}
+
+.search-area {
+    height: 75px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 15px;
+    flex-shrink: 0;
+}
+
+.search-panel {
+    width: 100%;
+    height: 40px;
+    background-color: #292937;
+    border-radius: 20px;
+    display: flex;
+    align-items: center;
+    padding: 0 15px;
+}
+
+.search-input {
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: #fff;
+    font-size: 14px;
+    font-family: inherit;
+}
+
+.search-input::placeholder {
+    color: #555;
+}
+
+.chat-list-content {
+    flex-grow: 1;
+    overflow-y: auto;
+}
+
+/* --- 3. RESIZE HANDLE --- */
+.resize-handle {
+    width: 1px;
+    height: 100%;
+    background-color: #100C1C;
+    cursor: col-resize;
+    transition: background-color 0.2s, width 0.2s;
+    z-index: 10;
+    flex-shrink: 0;
+}
+
+.resize-handle.active {
+    width: 3px;
+    background-color: #7B61FF;
+}
+
+/* --- 4. ACTIVE CHAT AREA --- */
+.active-chat-area {
+    flex-grow: 1;
+    background-color: #14141D;
+    display: flex;
+    flex-direction: column;
+    min-width: 300px;
+}
+
+.chat-header {
+    height: 75px;
+    background-color: #21212C;
+    border-left: 1px solid #100C1C;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+}
+
+.chat-header h2 {
+    color: #fff;
+    font-size: 18px;
+}
+
+.chat-messages-area {
+    flex-grow: 1;
+    overflow-y: auto;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+}
+
+/* --- Стили сообщений --- */
+.message {
+    padding: 10px 15px;
+    margin: 8px 10px;
+    border-radius: 15px;
+    max-width: 70%;
+    position: relative;
+}
+
+/* Чужие сообщения (слева) */
+.message-other {
+    align-self: flex-start;
+    background-color: #292937;
+    border-bottom-left-radius: 5px;
+}
+
+.message-other .message-username {
+    color: #7B61FF;
+    font-weight: bold;
+    font-size: 13px;
+    margin-bottom: 5px;
+}
+
+/* Свои сообщения (справа) */
+.message-own {
+    align-self: flex-end;
+    background-color: #7B61FF;
+    border-bottom-right-radius: 5px;
+}
+
+.message-own .message-username {
+    color: #E0D4FF;
+    font-weight: bold;
+    font-size: 13px;
+    margin-bottom: 5px;
+    text-align: right;
+}
+
+.message-own .message-content {
+    color: #fff;
+}
+
+.message-own .message-time {
+    color: #C4B5FF;
+}
+
+/* Общие стили для контента сообщений */
+.message-content {
+    color: #fff;
+    font-size: 14px;
+    line-height: 1.4;
+    word-wrap: break-word;
+}
+
+.message-time {
+    font-size: 11px;
+    color: #666;
+    text-align: right;
+    margin-top: 5px;
+}
+
+/* --- Панель ввода --- */
+.message-input-panel {
+    height: 75px;
+    background-color: #21212C;
+    border-left: 1px solid #171420;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    gap: 10px;
+}
+
+.message-input {
+    flex-grow: 1;
+    height: 45px;
+    background-color: #292937;
+    border: none;
+    outline: none;
+    border-radius: 22.5px;
+    padding: 0 20px;
+    color: #fff;
+    font-size: 14px;
+    font-family: inherit;
+}
+
+.message-input::placeholder {
+    color: #555;
+}
+
+#sendButton {
+    background: #7B61FF;
+    border: none;
+    color: white;
+    padding: 10px 15px;
+    border-radius: 22.5px;
+    cursor: pointer;
+    font-size: 16px;
+    min-width: 45px;
+    height: 45px;
+    transition: background 0.2s;
+}
+
+#sendButton:hover {
+    background: #6A52E0;
+}
+
+#sendButton:active {
+    transform: scale(0.95);
+}
+
+/* --- Скроллбары --- */
+::-webkit-scrollbar {
+    width: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #333;
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #444;
+}
