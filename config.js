@@ -7,3 +7,5 @@ if (typeof supabase === 'undefined') {
 }
 
 const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+console.log('Supabase клиент создан:', !!supabaseClient);
