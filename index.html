@@ -3,35 +3,45 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Twigram</title>
+    <title>Twigram Resizable</title>
     <link rel="stylesheet" href="style.css">
-    <link rel="icon" href="Twigram.svg">
+    <!-- Подключаем Supabase -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
     <div class="app-container">
-        <!-- 1. Левая узкая панель (Настройки) -->
-        <aside class="options-sidebar">
-            <!-- Иконки меню -->
-        </aside>
-        <!-- 2. Средняя панель (Список чатов) -->
-        <aside class="chat-list-panel" id="chatListPanel">
+        <!-- Options Sidebar -->
+        <div class="options-sidebar"></div>
+
+        <!-- Chat List Panel -->
+        <div class="chat-list-panel" id="chatListPanel">
             <div class="search-area">
                 <div class="search-panel">
-                    <input type="text" class="search-input" placeholder="Search">
+                    <input type="text" class="search-input" placeholder="Поиск...">
                 </div>
             </div>
-            <div class="chat-list-content">
-            </div>
-        </aside>
+            <div class="chat-list-content"></div>
+        </div>
+
+        <!-- Resize Handle -->
         <div class="resize-handle" id="resizeHandle"></div>
-        <main class="active-chat-area">
-            <header class="chat-header"></header>
-            <div class="chat-messages-area"></div>
-            <footer class="message-input-panel">
-                <input type="text" class="message-input" placeholder="Message...">
-            </footer>
-        </main>
+
+        <!-- Active Chat Area -->
+        <div class="active-chat-area">
+            <div class="chat-header">
+                <h2>Общий чат</h2>
+            </div>
+            <div class="chat-messages-area" id="chatMessagesArea"></div>
+            <div class="message-input-panel">
+                <input type="text" class="message-input" id="messageInput" placeholder="Введите сообщение...">
+                <button id="sendButton">➤</button>
+            </div>
+        </div>
     </div>
+
+    <!-- Подключение скриптов -->
+    <script src="config.js"></script>
+    <script src="chat.js"></script>
     <script src="script.js"></script>
 </body>
 </html>
