@@ -135,10 +135,16 @@ body {
     max-width: 70%;
     position: relative;
     cursor: default;
+    transition: opacity 0.3s ease;
 }
 
 .message:hover {
     filter: brightness(1.1);
+}
+
+/* Pending состояние (полупрозрачное) */
+.message-pending {
+    opacity: 0.6;
 }
 
 /* Чужие сообщения (слева) */
@@ -188,6 +194,11 @@ body {
     color: #C4B5FF;
 }
 
+.message-pending .message-time {
+    color: #AAA;
+    font-style: italic;
+}
+
 /* --- Контекстное меню --- */
 .context-menu {
     display: none;
@@ -195,7 +206,7 @@ body {
     background-color: #292937;
     border-radius: 8px;
     padding: 5px;
-    min-width: 150px;
+    min-width: 120px;
     box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
     z-index: 1000;
     border: 1px solid #100C1C;
@@ -204,7 +215,7 @@ body {
 .context-menu-item {
     display: flex;
     align-items: center;
-    gap: 10px;
+    justify-content: center;
     padding: 10px 15px;
     color: #fff;
     font-size: 14px;
