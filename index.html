@@ -5,16 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Twigram</title>
     <link rel="stylesheet" href="style.css">
-    <!-- Подключаем Supabase -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <link rel="icon" href="Twigram.png">
 </head>
 <body>
     <div class="app-container">
-        <!-- Options Sidebar -->
         <div class="options-sidebar"></div>
 
-        <!-- Chat List Panel -->
         <div class="chat-list-panel" id="chatListPanel">
             <div class="search-area">
                 <div class="search-panel">
@@ -24,12 +20,11 @@
             <div class="chat-list-content"></div>
         </div>
 
-        <!-- Resize Handle -->
         <div class="resize-handle" id="resizeHandle"></div>
 
-        <!-- Active Chat Area -->
         <div class="active-chat-area">
             <div class="chat-header">
+                <h2>Общий чат</h2>
             </div>
             <div class="chat-messages-area" id="chatMessagesArea"></div>
             <div class="message-input-panel">
@@ -39,7 +34,6 @@
         </div>
     </div>
 
-    <!-- Подключение скриптов -->
     <script src="config.js"></script>
     <script src="chat.js"></script>
     <script src="script.js"></script>
