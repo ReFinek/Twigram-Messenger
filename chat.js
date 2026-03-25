@@ -4,9 +4,11 @@ class ChatManager {
         this.messageInput = document.getElementById('messageInput');
         this.sendButton = document.getElementById('sendButton');
         this.messagesArea = document.getElementById('chatMessagesArea');
-        this.username = 'User_' + Math.floor(Math.random() * 1000);
+        // Генерируем имя пользователя один раз при загрузке
+        this.username = localStorage.getItem('chatUsername') || 'User_' + Math.floor(Math.random() * 1000);
+        localStorage.setItem('chatUsername', this.username);
         
-        if (!supabaseClient) {
+        if (typeof supabaseClient === 'undefined') {
             console.error('Supabase клиент не инициализирован!');
             return;
         }
@@ -76,7 +78,10 @@ class ChatManager {
 
     appendMessage(msg) {
         const messageDiv = document.createElement('div');
-        messageDiv.className = 'message';
+        // Проверяем, своё ли это сообщение
+        const isOwnMessage = msg.username === this.username;
+        messageDiv.className = `message ${isOwnMessage ? 'message-own' : 'message-other'}`;
+        
         messageDiv.innerHTML = `
             <div class="message-username">${this.escapeHtml(msg.username)}</div>
             <div class="message-content">${this.escapeHtml(msg.content)}</div>
