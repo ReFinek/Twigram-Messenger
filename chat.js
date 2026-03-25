@@ -67,15 +67,20 @@ class ChatManager {
         const content = this.messageInput.value.trim();
         const image = this.currentImage;
         
-        if (!content && !image) return;
-
-        // Генерируем временный ID
+        if (!content && !image) {
+            console.log('⚠️ Нет контента для отправки');
+            return;
+        }
+    
+        // 🔍 ДОБАВЛЕНО: Логирование изображения
+        console.log('📤 Отправка сообщения:', {
+            content: content ? '✅ (' + content.length + ' симв.)' : '❌',
+            image: image ? '✅ (' + (image.length / 1024).toFixed(2) + ' KB)' : '❌'
+        });
+    
         const tempId = 'temp_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
         
         try {
-            console.log('📤 Отправка сообщения...');
-            
-            // 1. СРАЗУ показываем сообщение (optimistic UI)
             this.appendMessage({
                 id: tempId,
                 username: this.username,
@@ -84,31 +89,36 @@ class ChatManager {
                 created_at: new Date().toISOString()
             }, true);
             
-            // 2. Отправляем на сервер
+            // 🔍 ДОБАВЛЕНО: Логирование перед отправкой в базу
+            console.log('📦 Данные для вставки:', {
+                username: this.username,
+                content: content || null,
+                image_url: image ? 'base64...' + image.substr(-20) : null,
+                imageLength: image?.length
+            });
+            
             const { data, error } = await supabaseClient
                 .from('messages')
                 .insert([{
                     username: this.username,
-                    content: content,
-                    image_url: image
+                    content: content || null,
+                    image_url: image || null
                 }])
                 .select();
-
+    
             if (error) {
                 console.error('❌ Ошибка отправки:', error);
                 this.removeMessage(tempId);
                 alert('Не удалось отправить сообщение: ' + error.message);
                 return;
             }
-
+    
             console.log('✅ Сообщение отправлено:', data);
             
-            // 3. Сохраняем маппинг tempId -> realId
             if (data && data[0]) {
                 this.pendingMessages.set(tempId, data[0].id);
             }
             
-            // 4. Очищаем форму
             this.messageInput.value = '';
             this.clearImagePreview();
             
