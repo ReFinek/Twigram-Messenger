@@ -124,6 +124,7 @@ body {
     padding: 10px;
     display: flex;
     flex-direction: column;
+    position: relative;
 }
 
 /* --- Стили сообщений --- */
@@ -133,6 +134,11 @@ body {
     border-radius: 15px;
     max-width: 70%;
     position: relative;
+    cursor: default;
+}
+
+.message:hover {
+    filter: brightness(1.1);
 }
 
 /* Чужие сообщения (слева) */
@@ -164,15 +170,6 @@ body {
     text-align: right;
 }
 
-.message-own .message-content {
-    color: #fff;
-}
-
-.message-own .message-time {
-    color: #C4B5FF;
-}
-
-/* Общие стили для контента сообщений */
 .message-content {
     color: #fff;
     font-size: 14px;
@@ -182,9 +179,46 @@ body {
 
 .message-time {
     font-size: 11px;
-    color: #666;
+    color: #888;
     text-align: right;
     margin-top: 5px;
+}
+
+.message-own .message-time {
+    color: #C4B5FF;
+}
+
+/* --- Контекстное меню --- */
+.context-menu {
+    display: none;
+    position: absolute;
+    background-color: #292937;
+    border-radius: 8px;
+    padding: 5px;
+    min-width: 150px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
+    z-index: 1000;
+    border: 1px solid #100C1C;
+}
+
+.context-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 15px;
+    color: #fff;
+    font-size: 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.context-menu-item:hover {
+    background-color: #7B61FF;
+}
+
+.context-menu-item:active {
+    transform: scale(0.98);
 }
 
 /* --- Панель ввода --- */
