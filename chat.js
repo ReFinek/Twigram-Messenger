@@ -10,7 +10,9 @@ class ChatManager {
         this.contextMenu = null;
         this.currentMessageId = null;
         this.loadedMessageIds = new Set();
-        this.pendingMessages = new Map(); // Храним временные ID pending сообщений
+        this.pendingMessages = new Map();
+        this.currentImage = null;
+        this.imagePreview = null;
         
         if (typeof supabaseClient === 'undefined') {
             console.error('❌ Supabase клиент не инициализирован!');
@@ -26,6 +28,7 @@ class ChatManager {
         this.setupEventListeners();
         this.subscribeToMessages();
         this.createContextMenu();
+        this.setupImageHandling();
     }
 
     async loadMessages() {
@@ -35,11 +38,10 @@ class ChatManager {
             const { data, error } = await supabaseClient
                 .from('messages')
                 .select('*')
-                .order('created_at', { ascending: true })
+                .order('created_at', { ascending: true });
 
             if (error) {
                 console.error('❌ Ошибка загрузки:', error);
-                alert('Ошибка загрузки сообщений: ' + error.message);
                 return;
             }
 
@@ -51,7 +53,7 @@ class ChatManager {
             if (data && data.length > 0) {
                 data.forEach(msg => {
                     this.loadedMessageIds.add(msg.id);
-                    this.appendMessage(msg, false); // false = не pending
+                    this.appendMessage(msg, false);
                 });
             }
             
@@ -63,34 +65,37 @@ class ChatManager {
 
     async sendMessage() {
         const content = this.messageInput.value.trim();
-        if (!content) return;
+        const image = this.currentImage;
+        
+        if (!content && !image) return;
 
-        // Генерируем временный ID для optimistic UI
+        // Генерируем временный ID
         const tempId = 'temp_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
         
         try {
-            console.log('📤 Отправка сообщения:', content);
+            console.log('📤 Отправка сообщения...');
             
-            // 1. СРАЗУ добавляем сообщение в UI (optimistic update)
+            // 1. СРАЗУ показываем сообщение (optimistic UI)
             this.appendMessage({
                 id: tempId,
                 username: this.username,
                 content: content,
+                image_url: image,
                 created_at: new Date().toISOString()
-            }, true); // true = pending
+            }, true);
             
             // 2. Отправляем на сервер
             const { data, error } = await supabaseClient
                 .from('messages')
                 .insert([{
                     username: this.username,
-                    content: content
+                    content: content,
+                    image_url: image
                 }])
                 .select();
 
             if (error) {
                 console.error('❌ Ошибка отправки:', error);
-                // Удаляем pending сообщение при ошибке
                 this.removeMessage(tempId);
                 alert('Не удалось отправить сообщение: ' + error.message);
                 return;
@@ -98,14 +103,40 @@ class ChatManager {
 
             console.log('✅ Сообщение отправлено:', data);
             
-            // 3. Заменяем pending сообщение на реальное (когда придёт realtime - оно не дублируется)
-            this.pendingMessages.set(tempId, data[0]?.id);
+            // 3. Сохраняем маппинг tempId -> realId
+            if (data && data[0]) {
+                this.pendingMessages.set(tempId, data[0].id);
+            }
+            
+            // 4. Очищаем форму
             this.messageInput.value = '';
+            this.clearImagePreview();
             
         } catch (err) {
             console.error('❌ Ошибка отправки:', err);
             this.removeMessage(tempId);
             alert('Не удалось отправить сообщение');
+        }
+    }
+
+    async editMessage(messageId, newContent) {
+        try {
+            console.log('✏️ Редактирование сообщения:', messageId);
+            
+            const { error } = await supabaseClient
+                .from('messages')
+                .update({ content: newContent })
+                .eq('id', messageId);
+
+            if (error) {
+                console.error('❌ Ошибка редактирования:', error);
+                alert('Не удалось изменить сообщение');
+                return;
+            }
+
+            console.log('✅ Сообщение изменено');
+        } catch (err) {
+            console.error('❌ Ошибка редактирования:', err);
         }
     }
 
@@ -120,7 +151,7 @@ class ChatManager {
 
             if (error) {
                 console.error('❌ Ошибка удаления:', error);
-                alert('Не удалось удалить сообщение: ' + error.message);
+                alert('Не удалось удалить сообщение');
                 return;
             }
 
@@ -138,16 +169,28 @@ class ChatManager {
                 (payload) => {
                     console.log('📬 Новое сообщение (Realtime):', payload.new);
                     
-                    // Проверяем, нет ли уже такого сообщения
-                    if (this.loadedMessageIds.has(payload.new.id)) {
-                        // Это наше сообщение, убираем pending статус
-                        this.markMessageAsDelivered(payload.new.id);
-                        return;
+                    // Проверяем, не наше ли это pending сообщение
+                    for (const [tempId, realId] of this.pendingMessages.entries()) {
+                        if (realId === payload.new.id) {
+                            // Это наше сообщение - просто подтверждаем
+                            this.markMessageAsDelivered(tempId, payload.new.id);
+                            return;
+                        }
                     }
                     
-                    this.loadedMessageIds.add(payload.new.id);
-                    this.appendMessage(payload.new, false);
-                    this.scrollToBottom();
+                    // Чужое сообщение - добавляем
+                    if (!this.loadedMessageIds.has(payload.new.id)) {
+                        this.loadedMessageIds.add(payload.new.id);
+                        this.appendMessage(payload.new, false);
+                        this.scrollToBottom();
+                    }
+                }
+            )
+            .on('postgres_changes',
+                { event: 'UPDATE', schema: 'public', table: 'messages' },
+                (payload) => {
+                    console.log('✏️ Сообщение изменено (Realtime):', payload.new);
+                    this.updateMessage(payload.new);
                 }
             )
             .on('postgres_changes',
@@ -163,25 +206,26 @@ class ChatManager {
             });
     }
 
-    markMessageAsDelivered(realId) {
-        // Ищем pending сообщение и заменяем его ID на реальный
-        for (const [tempId, storedRealId] of this.pendingMessages.entries()) {
-            if (storedRealId === realId) {
-                const pendingEl = document.querySelector(`[data-message-id="${tempId}"]`);
-                if (pendingEl) {
-                    pendingEl.setAttribute('data-message-id', realId);
-                    pendingEl.classList.remove('message-pending');
-                    this.loadedMessageIds.add(realId);
-                    this.pendingMessages.delete(tempId);
-                    console.log('✅ Сообщение подтверждено:', realId);
-                }
-                break;
+    markMessageAsDelivered(tempId, realId) {
+        const pendingEl = document.querySelector(`[data-message-id="${tempId}"]`);
+        if (pendingEl) {
+            pendingEl.setAttribute('data-message-id', realId);
+            pendingEl.classList.remove('message-pending');
+            
+            // Обновляем время
+            const timeEl = pendingEl.querySelector('.message-time');
+            if (timeEl) {
+                timeEl.textContent = new Date().toLocaleTimeString();
             }
+            
+            this.loadedMessageIds.add(realId);
+            this.pendingMessages.delete(tempId);
+            console.log('✅ Сообщение подтверждено:', realId);
         }
     }
 
     appendMessage(msg, isPending = false) {
-        // Проверяем, существует ли уже сообщение с таким ID
+        // Проверяем дубликаты
         const existingMsg = document.querySelector(`[data-message-id="${msg.id}"]`);
         if (existingMsg) {
             return;
@@ -193,13 +237,21 @@ class ChatManager {
         messageDiv.className = `message ${isOwnMessage ? 'message-own' : 'message-other'} ${isPending ? 'message-pending' : ''}`;
         messageDiv.setAttribute('data-message-id', msg.id);
         
+        let contentHtml = '';
+        if (msg.image_url) {
+            contentHtml += `<img src="${msg.image_url}" class="message-image" alt="Image">`;
+        }
+        if (msg.content) {
+            contentHtml += `<div class="message-content">${this.escapeHtml(msg.content)}</div>`;
+        }
+        
         messageDiv.innerHTML = `
             <div class="message-username">${this.escapeHtml(msg.username)}</div>
-            <div class="message-content">${this.escapeHtml(msg.content)}</div>
+            ${contentHtml}
             <div class="message-time">${isPending ? 'Отправка...' : new Date(msg.created_at).toLocaleTimeString()}</div>
         `;
 
-        // Контекстное меню только для своих сообщений (не pending)
+        // Контекстное меню только для своих не-pending сообщений
         if (isOwnMessage && !isPending) {
             messageDiv.addEventListener('contextmenu', (e) => {
                 e.preventDefault();
@@ -208,6 +260,21 @@ class ChatManager {
         }
 
         this.messagesArea.appendChild(messageDiv);
+    }
+
+    updateMessage(msg) {
+        const messageEl = document.querySelector(`[data-message-id="${msg.id}"]`);
+        if (messageEl) {
+            const contentEl = messageEl.querySelector('.message-content');
+            if (contentEl) {
+                contentEl.textContent = msg.content;
+            }
+            // Добавляем пометку об изменении
+            const timeEl = messageEl.querySelector('.message-time');
+            if (timeEl && !timeEl.textContent.includes('(изм.)')) {
+                timeEl.textContent = timeEl.textContent + ' (изм.)';
+            }
+        }
     }
 
     removeMessage(messageId) {
@@ -219,21 +286,28 @@ class ChatManager {
     }
 
     createContextMenu() {
-        // Удаляем старое меню если есть
         const existingMenu = document.querySelector('.context-menu');
         if (existingMenu) existingMenu.remove();
 
-        // Создаём элемент контекстного меню
         this.contextMenu = document.createElement('div');
         this.contextMenu.className = 'context-menu';
         this.contextMenu.innerHTML = `
+            <div class="context-menu-item" id="editMessageBtn">
+                <span>Изменить</span>
+            </div>
             <div class="context-menu-item" id="deleteMessageBtn">
                 <span>Удалить</span>
             </div>
         `;
         document.body.appendChild(this.contextMenu);
 
-        // Обработчик удаления
+        document.getElementById('editMessageBtn').addEventListener('click', () => {
+            if (this.currentMessageId) {
+                this.promptEditMessage(this.currentMessageId);
+            }
+            this.hideContextMenu();
+        });
+
         document.getElementById('deleteMessageBtn').addEventListener('click', () => {
             if (this.currentMessageId) {
                 this.deleteMessage(this.currentMessageId);
@@ -241,17 +315,28 @@ class ChatManager {
             this.hideContextMenu();
         });
 
-        // Скрытие меню при клике в любом месте
         document.addEventListener('click', (e) => {
             if (!this.contextMenu.contains(e.target)) {
                 this.hideContextMenu();
             }
         });
 
-        // Скрытие при прокрутке
         this.messagesArea?.addEventListener('scroll', () => {
             this.hideContextMenu();
         });
+    }
+
+    promptEditMessage(messageId) {
+        const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
+        if (!messageEl) return;
+
+        const contentEl = messageEl.querySelector('.message-content');
+        const currentText = contentEl?.textContent || '';
+
+        const newContent = prompt('Изменить сообщение:', currentText);
+        if (newContent !== null && newContent.trim() !== '' && newContent !== currentText) {
+            this.editMessage(messageId, newContent.trim());
+        }
     }
 
     showContextMenu(e, messageId, messageElement) {
@@ -261,23 +346,17 @@ class ChatManager {
         const messageRect = messageElement.getBoundingClientRect();
         const containerRect = this.messagesArea.getBoundingClientRect();
         
-        // Позиционируем меню относительно сообщения
-        let left = messageRect.right - containerRect.left - 150; // 150px - ширина меню
+        // Позиционируем меню справа от сообщения (для своих сообщений)
+        let left = messageRect.right - containerRect.left - 140;
         let top = messageRect.top - containerRect.top;
         
-        // Проверка чтобы меню не выходило за границы слева
-        if (left < 10) {
-            left = 10;
+        // Ограничения
+        if (left < 10) left = 10;
+        if (left + 140 > containerRect.width - 10) {
+            left = containerRect.width - 150;
         }
-        
-        // Проверка чтобы меню не выходило за границы справа
-        if (left + 150 > containerRect.width - 10) {
-            left = containerRect.width - 160;
-        }
-        
-        // Проверка чтобы меню не выходило за границы снизу
-        if (top + 40 > containerRect.height) {
-            top = containerRect.height - 50;
+        if (top + 80 > containerRect.height) {
+            top = containerRect.height - 90;
         }
 
         menu.style.left = `${left}px`;
@@ -290,6 +369,85 @@ class ChatManager {
             this.contextMenu.style.display = 'none';
         }
         this.currentMessageId = null;
+    }
+
+    setupImageHandling() {
+        // Вставка из буфера обмена
+        this.messageInput.addEventListener('paste', (e) => {
+            const items = e.clipboardData?.items;
+            if (!items) return;
+
+            for (let item of items) {
+                if (item.type.startsWith('image/')) {
+                    e.preventDefault();
+                    const blob = item.getAsFile();
+                    this.handleImageFile(blob);
+                    break;
+                }
+            }
+        });
+
+        // Drag & Drop на всю область чата
+        this.messagesArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            this.messagesArea.style.backgroundColor = '#1a1a25';
+        });
+
+        this.messagesArea.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            this.messagesArea.style.backgroundColor = '';
+        });
+
+        this.messagesArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            this.messagesArea.style.backgroundColor = '';
+            
+            const files = e.dataTransfer?.files;
+            if (files && files.length > 0) {
+                const file = files[0];
+                if (file.type.startsWith('image/')) {
+                    this.handleImageFile(file);
+                }
+            }
+        });
+    }
+
+    handleImageFile(file) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            this.currentImage = e.target.result;
+            this.showImagePreview(this.currentImage);
+        };
+        reader.readAsDataURL(file);
+    }
+
+    showImagePreview(imageUrl) {
+        // Удаляем старый превью если есть
+        this.clearImagePreview();
+
+        this.imagePreview = document.createElement('div');
+        this.imagePreview.className = 'image-preview';
+        this.imagePreview.innerHTML = `
+            <img src="${imageUrl}" alt="Preview">
+            <button class="image-preview-remove" title="Удалить изображение">✕</button>
+        `;
+
+        // Вставляем перед панелью ввода
+        const inputPanel = document.querySelector('.message-input-panel');
+        inputPanel.parentNode.insertBefore(this.imagePreview, inputPanel);
+
+        // Кнопка удаления
+        this.imagePreview.querySelector('.image-preview-remove').addEventListener('click', () => {
+            this.clearImagePreview();
+        });
+    }
+
+    clearImagePreview() {
+        if (this.imagePreview) {
+            this.imagePreview.remove();
+            this.imagePreview = null;
+        }
+        this.currentImage = null;
     }
 
     scrollToBottom() {
