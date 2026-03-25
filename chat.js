@@ -6,6 +6,11 @@ class ChatManager {
         this.messagesArea = document.getElementById('chatMessagesArea');
         this.username = 'User_' + Math.floor(Math.random() * 1000);
         
+        if (!supabaseClient) {
+            console.error('Supabase клиент не инициализирован!');
+            return;
+        }
+        
         this.init();
     }
 
@@ -15,49 +20,49 @@ class ChatManager {
         this.subscribeToMessages();
     }
 
-    // Загрузка сообщений
     async loadMessages() {
-        const { data, error } = await supabase
-            .from('messages')
-            .select('*')
-            .order('created_at', { ascending: true })
-            .limit(50);
+        try {
+            const { data, error } = await supabaseClient
+                .from('messages')
+                .select('*')
+                .order('created_at', { ascending: true })
+                .limit(50);
 
-        if (error) {
-            console.error('Ошибка загрузки:', error);
-            return;
+            if (error) throw error;
+
+            this.messagesArea.innerHTML = '';
+            if (data) {
+                data.forEach(msg => this.appendMessage(msg));
+            }
+            this.scrollToBottom();
+        } catch (err) {
+            console.error('Ошибка загрузки сообщений:', err);
         }
-
-        this.messagesArea.innerHTML = '';
-        data.forEach(msg => this.appendMessage(msg));
-        this.scrollToBottom();
     }
 
-    // Отправка сообщения
     async sendMessage() {
         const content = this.messageInput.value.trim();
         if (!content) return;
 
-        const { error } = await supabase
-            .from('messages')
-            .insert([{
-                username: this.username,
-                content: content
-            }]);
+        try {
+            const { error } = await supabaseClient
+                .from('messages')
+                .insert([{
+                    username: this.username,
+                    content: content
+                }]);
 
-        if (error) {
-            console.error('Ошибка отправки:', error);
+            if (error) throw error;
+
+            this.messageInput.value = '';
+        } catch (err) {
+            console.error('Ошибка отправки:', err);
             alert('Не удалось отправить сообщение');
-            return;
         }
-
-        this.messageInput.value = '';
-        this.scrollToBottom();
     }
 
-    // Подписка на новые сообщения (Realtime)
     subscribeToMessages() {
-        supabase
+        supabaseClient
             .channel('messages')
             .on('postgres_changes', 
                 { event: 'INSERT', schema: 'public', table: 'messages' },
@@ -69,7 +74,6 @@ class ChatManager {
             .subscribe();
     }
 
-    // Отображение сообщения
     appendMessage(msg) {
         const messageDiv = document.createElement('div');
         messageDiv.className = 'message';
@@ -81,19 +85,16 @@ class ChatManager {
         this.messagesArea.appendChild(messageDiv);
     }
 
-    // Прокрутка вниз
     scrollToBottom() {
         this.messagesArea.scrollTop = this.messagesArea.scrollHeight;
     }
 
-    // Защита от XSS
     escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
     }
 
-    // Обработчики событий
     setupEventListeners() {
         this.sendButton?.addEventListener('click', () => this.sendMessage());
         
@@ -103,7 +104,6 @@ class ChatManager {
     }
 }
 
-// Инициализация после загрузки DOM
 document.addEventListener('DOMContentLoaded', () => {
     window.chatManager = new ChatManager();
 });
