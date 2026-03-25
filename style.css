@@ -151,3 +151,47 @@ body {
     background: #333;
     border-radius: 3px;
 }
+/* Стили для сообщений */
+.message {
+    padding: 10px 15px;
+    margin: 5px 10px;
+    background-color: #292937;
+    border-radius: 10px;
+    max-width: 70%;
+}
+
+.message-username {
+    font-weight: bold;
+    color: #7B61FF;
+    font-size: 13px;
+    margin-bottom: 5px;
+}
+
+.message-content {
+    color: #fff;
+    font-size: 14px;
+    line-height: 1.4;
+}
+
+.message-time {
+    font-size: 11px;
+    color: #666;
+    text-align: right;
+    margin-top: 5px;
+}
+
+/* Кнопка отправки */
+#sendButton {
+    background: #7B61FF;
+    border: none;
+    color: white;
+    padding: 10px 15px;
+    border-radius: 22.5px;
+    margin-left: 10px;
+    cursor: pointer;
+    font-size: 16px;
+}
+
+#sendButton:hover {
+    background: #6A52E0;
+}
