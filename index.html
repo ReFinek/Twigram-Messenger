@@ -29,6 +29,15 @@
             <div class="chat-messages-area" id="chatMessagesArea"></div>
             <div class="message-input-panel">
                 <input type="text" class="message-input" id="messageInput" placeholder="Введите сообщение...">
+                <!-- Скрытый input для выбора файла -->
+                <input type="file" id="image-input" accept="image/*" hidden>
+                
+                <!-- Контейнер для превью (опционально, но рекомендуется) -->
+                <div id="image-preview" style="display: none; padding: 8px 15px; background: #2c2c2e;"></div>
+                
+                <!-- Кнопка прикрепления (опционально, если хотите иконку скрепки) -->
+                <!-- Добавьте в chat-input-container, перед message-input: -->
+                <button type="button" id="attach-image" class="icon" title="Прикрепить изображение">📎</button>
                 <button id="sendButton">➤</button>
             </div>
         </div>
