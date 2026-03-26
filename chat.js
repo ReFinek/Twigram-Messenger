@@ -12,6 +12,7 @@ class ChatManager {
         this.loadedMessageIds = new Set();
         this.pendingMessages = new Map();
         this.currentImage = null;
+        this.currentImageBlob = null; // 🔹 Храним Blob отдельно
         this.imagePreview = null;
         
         if (typeof supabaseClient === 'undefined') {
@@ -65,60 +66,92 @@ class ChatManager {
 
     async sendMessage() {
         const content = this.messageInput.value.trim();
-        const image = this.currentImage;
         
+        // 🔹 ПРОВЕРКА: Сохраняем изображение ПЕРЕД любой проверкой
+        const image = this.currentImage;
+        const imageBlob = this.currentImageBlob;
+        
+        console.log('🔍 Проверка перед отправкой:', {
+            hasContent: !!content,
+            hasImage: !!image,
+            hasImageBlob: !!imageBlob,
+            contentLength: content?.length,
+            imageLength: image?.length
+        });
+        
+        // 🔹 ИСПРАВЛЕНО: Разрешаем отправку только изображения
         if (!content && !image) {
-            console.log('⚠️ Нет контента для отправки');
+            console.log('⚠️ Нет контента для отправки (ни текста, ни изображения)');
             return;
         }
-    
-        // 🔍 ДОБАВЛЕНО: Логирование изображения
-        console.log('📤 Отправка сообщения:', {
-            content: content ? '✅ (' + content.length + ' симв.)' : '❌',
-            image: image ? '✅ (' + (image.length / 1024).toFixed(2) + ' KB)' : '❌'
-        });
-    
+
+        console.log('📤 Отправка сообщения...');
+
         const tempId = 'temp_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
         
         try {
+            let imageUrl = null;
+            
+            // 🔹 Загружаем изображение в Storage (если есть)
+            if (imageBlob) {
+                console.log('🖼️ Загрузка изображения в Storage...');
+                
+                const fileName = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}.png`;
+                
+                const { data: uploadData, error: uploadError } = await supabaseClient.storage
+                    .from('messages-images')
+                    .upload(fileName, imageBlob, {
+                        cacheControl: '3600',
+                        upsert: false,
+                        contentType: imageBlob.type
+                    });
+
+                if (uploadError) {
+                    console.error('❌ Ошибка загрузки изображения:', uploadError);
+                    // Продолжаем без изображения, не прерываем отправку
+                } else {
+                    const { data: urlData } = supabaseClient.storage
+                        .from('messages-images')
+                        .getPublicUrl(fileName);
+
+                    imageUrl = urlData.publicUrl;
+                    console.log('✅ Изображение загружено:', imageUrl);
+                }
+            }
+
+            // 🔹 Показываем сообщение в UI СРАЗУ (optimistic)
             this.appendMessage({
                 id: tempId,
                 username: this.username,
                 content: content,
-                image_url: image,
+                image_url: imageUrl,
                 created_at: new Date().toISOString()
             }, true);
             
-            // 🔍 ДОБАВЛЕНО: Логирование перед отправкой в базу
-            console.log('📦 Данные для вставки:', {
-                username: this.username,
-                content: content || null,
-                image_url: image ? 'base64...' + image.substr(-20) : null,
-                imageLength: image?.length
-            });
-            
+            // 🔹 Отправляем в базу данных
             const { data, error } = await supabaseClient
                 .from('messages')
                 .insert([{
                     username: this.username,
                     content: content || null,
-                    image_url: image || null
+                    image_url: imageUrl || null
                 }])
                 .select();
-    
+
             if (error) {
-                console.error('❌ Ошибка отправки:', error);
+                console.error('❌ Ошибка отправки в базу:', error);
                 this.removeMessage(tempId);
                 alert('Не удалось отправить сообщение: ' + error.message);
                 return;
             }
-    
-            console.log('✅ Сообщение отправлено:', data);
+
+            console.log('✅ Сообщение отправлено в базу:', data);
             
             if (data && data[0]) {
                 this.pendingMessages.set(tempId, data[0].id);
             }
             
+            // 🔹 Очищаем форму ТОЛЬКО ПОСЛЕ успешной отправки
             this.messageInput.value = '';
             this.clearImagePreview();
             
@@ -179,16 +212,13 @@ class ChatManager {
                 (payload) => {
                     console.log('📬 Новое сообщение (Realtime):', payload.new);
                     
-                    // Проверяем, не наше ли это pending сообщение
                     for (const [tempId, realId] of this.pendingMessages.entries()) {
                         if (realId === payload.new.id) {
-                            // Это наше сообщение - просто подтверждаем
                             this.markMessageAsDelivered(tempId, payload.new.id);
                             return;
                         }
                     }
                     
-                    // Чужое сообщение - добавляем
                     if (!this.loadedMessageIds.has(payload.new.id)) {
                         this.loadedMessageIds.add(payload.new.id);
                         this.appendMessage(payload.new, false);
@@ -222,7 +252,6 @@ class ChatManager {
             pendingEl.setAttribute('data-message-id', realId);
             pendingEl.classList.remove('message-pending');
             
-            // Обновляем время
             const timeEl = pendingEl.querySelector('.message-time');
             if (timeEl) {
                 timeEl.textContent = new Date().toLocaleTimeString();
@@ -235,11 +264,8 @@ class ChatManager {
     }
 
     appendMessage(msg, isPending = false) {
-        // Проверяем дубликаты
         const existingMsg = document.querySelector(`[data-message-id="${msg.id}"]`);
-        if (existingMsg) {
-            return;
-        }
+        if (existingMsg) return;
 
         const isOwnMessage = msg.username === this.username;
         
@@ -248,10 +274,12 @@ class ChatManager {
         messageDiv.setAttribute('data-message-id', msg.id);
         
         let contentHtml = '';
+        
         if (msg.image_url) {
-            contentHtml += `<img src="${msg.image_url}" class="message-image" alt="Image">`;
+            contentHtml += `<img src="${msg.image_url}" class="message-image" alt="Image" loading="lazy">`;
         }
-        if (msg.content) {
+        
+        if (msg.content && msg.content.trim() !== '') {
             contentHtml += `<div class="message-content">${this.escapeHtml(msg.content)}</div>`;
         }
         
@@ -261,7 +289,6 @@ class ChatManager {
             <div class="message-time">${isPending ? 'Отправка...' : new Date(msg.created_at).toLocaleTimeString()}</div>
         `;
 
-        // Контекстное меню только для своих не-pending сообщений
         if (isOwnMessage && !isPending) {
             messageDiv.addEventListener('contextmenu', (e) => {
                 e.preventDefault();
@@ -279,7 +306,6 @@ class ChatManager {
             if (contentEl) {
                 contentEl.textContent = msg.content;
             }
-            // Добавляем пометку об изменении
             const timeEl = messageEl.querySelector('.message-time');
             if (timeEl && !timeEl.textContent.includes('(изм.)')) {
                 timeEl.textContent = timeEl.textContent + ' (изм.)';
@@ -356,11 +382,9 @@ class ChatManager {
         const messageRect = messageElement.getBoundingClientRect();
         const containerRect = this.messagesArea.getBoundingClientRect();
         
-        // Позиционируем меню справа от сообщения (для своих сообщений)
         let left = messageRect.right - containerRect.left - 140;
         let top = messageRect.top - containerRect.top;
         
-        // Ограничения
         if (left < 10) left = 10;
         if (left + 140 > containerRect.width - 10) {
             left = containerRect.width - 150;
@@ -397,7 +421,7 @@ class ChatManager {
             }
         });
 
-        // Drag & Drop на всю область чата
+        // Drag & Drop
         this.messagesArea.addEventListener('dragover', (e) => {
             e.preventDefault();
             this.messagesArea.style.backgroundColor = '#1a1a25';
@@ -425,14 +449,25 @@ class ChatManager {
     handleImageFile(file) {
         const reader = new FileReader();
         reader.onload = (e) => {
+            // 🔹 Сохраняем И base64 для превью, И blob для загрузки
             this.currentImage = e.target.result;
+            this.currentImageBlob = file;
+            
+            console.log('🖼️ Изображение готово:', {
+                base64Length: this.currentImage?.length,
+                blobSize: (this.currentImageBlob?.size / 1024).toFixed(2) + ' KB',
+                type: this.currentImageBlob?.type
+            });
+            
             this.showImagePreview(this.currentImage);
+        };
+        reader.onerror = () => {
+            console.error('❌ Ошибка чтения изображения');
         };
         reader.readAsDataURL(file);
     }
 
     showImagePreview(imageUrl) {
-        // Удаляем старый превью если есть
         this.clearImagePreview();
 
         this.imagePreview = document.createElement('div');
@@ -442,11 +477,9 @@ class ChatManager {
             <button class="image-preview-remove" title="Удалить изображение">✕</button>
         `;
 
-        // Вставляем перед панелью ввода
         const inputPanel = document.querySelector('.message-input-panel');
         inputPanel.parentNode.insertBefore(this.imagePreview, inputPanel);
 
-        // Кнопка удаления
         this.imagePreview.querySelector('.image-preview-remove').addEventListener('click', () => {
             this.clearImagePreview();
         });
@@ -458,6 +491,7 @@ class ChatManager {
             this.imagePreview = null;
         }
         this.currentImage = null;
+        this.currentImageBlob = null;
     }
 
     scrollToBottom() {
@@ -474,7 +508,10 @@ class ChatManager {
         this.sendButton?.addEventListener('click', () => this.sendMessage());
         
         this.messageInput?.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') this.sendMessage();
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                this.sendMessage();
+            }
         });
     }
 }
