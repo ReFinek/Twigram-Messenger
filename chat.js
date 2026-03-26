@@ -1,521 +1,724 @@
-// chat.js
 class ChatManager {
     constructor() {
-        this.messageInput = document.getElementById('messageInput');
-        this.sendButton = document.getElementById('sendButton');
-        this.messagesArea = document.getElementById('chatMessagesArea');
-        this.username = localStorage.getItem('chatUsername') || 'User_' + Math.floor(Math.random() * 1000);
-        localStorage.setItem('chatUsername', this.username);
-        
-        this.contextMenu = null;
-        this.currentMessageId = null;
-        this.loadedMessageIds = new Set();
-        this.pendingMessages = new Map();
-        this.currentImage = null;
-        this.currentImageBlob = null; // 🔹 Храним Blob отдельно
-        this.imagePreview = null;
-        
-        if (typeof supabaseClient === 'undefined') {
-            console.error('❌ Supabase клиент не инициализирован!');
-            return;
-        }
-        
-        console.log('✅ Чат инициализирован для:', this.username);
+        this.currentChat = null;
+        this.chats = [];
+        this.apiBase = window.location.origin;
+        this.socket = null;
+        this.reconnectAttempts = 0;
+        this.maxReconnectAttempts = 5;
+        this.messageQueue = [];
+        // 🔥 Новые свойства для работы с изображениями
+        this.pendingImage = null;
+        this.pendingImageName = '';
         this.init();
     }
 
     init() {
-        this.loadMessages();
-        this.setupEventListeners();
-        this.subscribeToMessages();
-        this.createContextMenu();
-        this.setupImageHandling();
+        this.bindEvents();
     }
 
-    async loadMessages() {
-        try {
-            console.log('📥 Загрузка сообщений...');
-            
-            const { data, error } = await supabaseClient
-                .from('messages')
-                .select('*')
-                .order('created_at', { ascending: true });
+    bindEvents() {
+        // Навигация
+        document.getElementById('back-to-chats')?.addEventListener('click', () => this.showChatList());
+        document.getElementById('back-from-profile')?.addEventListener('click', () => this.showChatList());
+        
+        // Отправка сообщений
+        document.getElementById('send-message')?.addEventListener('click', () => this.sendMessage());
+        document.getElementById('message-input')?.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') this.sendMessage();
+        });
+        
+        // Поиск
+        document.getElementById('search-toggle')?.addEventListener('click', () => this.toggleSearch());
+        document.getElementById('chat-search')?.addEventListener('input', (e) => this.searchChats(e.target.value));
+        
+        // Вкладки чатов
+        document.querySelectorAll('.chat-list-tab').forEach(tab => {
+            tab.addEventListener('click', (e) => this.filterChats(e.target.dataset.tab));
+        });
 
-            if (error) {
-                console.error('❌ Ошибка загрузки:', error);
-                return;
-            }
-
-            console.log('✅ Загружено сообщений:', data?.length || 0);
-            
-            this.messagesArea.innerHTML = '';
-            this.loadedMessageIds.clear();
-            
-            if (data && data.length > 0) {
-                data.forEach(msg => {
-                    this.loadedMessageIds.add(msg.id);
-                    this.appendMessage(msg, false);
-                });
-            }
-            
-            this.scrollToBottom();
-        } catch (err) {
-            console.error('❌ Ошибка загрузки сообщений:', err);
+        // 🔥 Обработчик выбора изображения
+        const imageInput = document.getElementById('image-input');
+        if (imageInput) {
+            imageInput.addEventListener('change', (e) => this.handleImageSelect(e));
+        }
+        
+        // Кнопка прикрепления (если есть в вашем HTML)
+        const attachBtn = document.getElementById('attach-image');
+        if (attachBtn) {
+            attachBtn.addEventListener('click', () => {
+                document.getElementById('image-input')?.click();
+            });
         }
     }
 
-    async sendMessage() {
-        const content = this.messageInput.value.trim();
-        
-        // 🔹 ПРОВЕРКА: Сохраняем изображение ПЕРЕД любой проверкой
-        const image = this.currentImage;
-        const imageBlob = this.currentImageBlob;
-        
-        console.log('🔍 Проверка перед отправкой:', {
-            hasContent: !!content,
-            hasImage: !!image,
-            hasImageBlob: !!imageBlob,
-            contentLength: content?.length,
-            imageLength: image?.length
-        });
-        
-        // 🔹 ИСПРАВЛЕНО: Разрешаем отправку только изображения
-        if (!content && !image) {
-            console.log('⚠️ Нет контента для отправки (ни текста, ни изображения)');
+    // 🔥 Обработка выбора файла
+    handleImageSelect(event) {
+        const file = event.target.files[0];
+        if (!file || !file.type.startsWith('image/')) {
+            this.showErrorMessage('Пожалуйста, выберите изображение');
+            event.target.value = '';
             return;
         }
 
-        console.log('📤 Отправка сообщения...');
+        // Ограничение размера (10 МБ)
+        if (file.size > 10 * 1024 * 1024) {
+            this.showErrorMessage('Файл слишком большой (макс. 10 МБ)');
+            event.target.value = '';
+            return;
+        }
 
-        const tempId = 'temp_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        this.pendingImage = file;
+        this.pendingImageName = file.name;
         
-        try {
-            let imageUrl = null;
-            
-            // 🔹 Загружаем изображение в Storage (если есть)
-            if (imageBlob) {
-                console.log('🖼️ Загрузка изображения в Storage...');
-                
-                const fileName = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}.png`;
-                
-                const { data: uploadData, error: uploadError } = await supabaseClient.storage
-                    .from('messages-images')
-                    .upload(fileName, imageBlob, {
-                        cacheControl: '3600',
-                        upsert: false,
-                        contentType: imageBlob.type
-                    });
-
-                if (uploadError) {
-                    console.error('❌ Ошибка загрузки изображения:', uploadError);
-                    // Продолжаем без изображения, не прерываем отправку
-                } else {
-                    const { data: urlData } = supabaseClient.storage
-                        .from('messages-images')
-                        .getPublicUrl(fileName);
-
-                    imageUrl = urlData.publicUrl;
-                    console.log('✅ Изображение загружено:', imageUrl);
-                }
-            }
-
-            // 🔹 Показываем сообщение в UI СРАЗУ (optimistic)
-            this.appendMessage({
-                id: tempId,
-                username: this.username,
-                content: content,
-                image_url: imageUrl,
-                created_at: new Date().toISOString()
-            }, true);
-            
-            // 🔹 Отправляем в базу данных
-            const { data, error } = await supabaseClient
-                .from('messages')
-                .insert([{
-                    username: this.username,
-                    content: content || null,
-                    image_url: imageUrl || null
-                }])
-                .select();
-
-            if (error) {
-                console.error('❌ Ошибка отправки в базу:', error);
-                this.removeMessage(tempId);
-                alert('Не удалось отправить сообщение: ' + error.message);
-                return;
-            }
-
-            console.log('✅ Сообщение отправлено в базу:', data);
-            
-            if (data && data[0]) {
-                this.pendingMessages.set(tempId, data[0].id);
-            }
-            
-            // 🔹 Очищаем форму ТОЛЬКО ПОСЛЕ успешной отправки
-            this.messageInput.value = '';
-            this.clearImagePreview();
-            
-        } catch (err) {
-            console.error('❌ Ошибка отправки:', err);
-            this.removeMessage(tempId);
-            alert('Не удалось отправить сообщение');
-        }
-    }
-
-    async editMessage(messageId, newContent) {
-        try {
-            console.log('✏️ Редактирование сообщения:', messageId);
-            
-            const { error } = await supabaseClient
-                .from('messages')
-                .update({ content: newContent })
-                .eq('id', messageId);
-
-            if (error) {
-                console.error('❌ Ошибка редактирования:', error);
-                alert('Не удалось изменить сообщение');
-                return;
-            }
-
-            console.log('✅ Сообщение изменено');
-        } catch (err) {
-            console.error('❌ Ошибка редактирования:', err);
-        }
-    }
-
-    async deleteMessage(messageId) {
-        try {
-            console.log('🗑️ Удаление сообщения:', messageId);
-            
-            const { error } = await supabaseClient
-                .from('messages')
-                .delete()
-                .eq('id', messageId);
-
-            if (error) {
-                console.error('❌ Ошибка удаления:', error);
-                alert('Не удалось удалить сообщение');
-                return;
-            }
-
-            console.log('✅ Сообщение удалено');
-        } catch (err) {
-            console.error('❌ Ошибка удаления:', err);
-        }
-    }
-
-    subscribeToMessages() {
-        const channel = supabaseClient
-            .channel('messages')
-            .on('postgres_changes', 
-                { event: 'INSERT', schema: 'public', table: 'messages' },
-                (payload) => {
-                    console.log('📬 Новое сообщение (Realtime):', payload.new);
-                    
-                    for (const [tempId, realId] of this.pendingMessages.entries()) {
-                        if (realId === payload.new.id) {
-                            this.markMessageAsDelivered(tempId, payload.new.id);
-                            return;
-                        }
-                    }
-                    
-                    if (!this.loadedMessageIds.has(payload.new.id)) {
-                        this.loadedMessageIds.add(payload.new.id);
-                        this.appendMessage(payload.new, false);
-                        this.scrollToBottom();
-                    }
-                }
-            )
-            .on('postgres_changes',
-                { event: 'UPDATE', schema: 'public', table: 'messages' },
-                (payload) => {
-                    console.log('✏️ Сообщение изменено (Realtime):', payload.new);
-                    this.updateMessage(payload.new);
-                }
-            )
-            .on('postgres_changes',
-                { event: 'DELETE', schema: 'public', table: 'messages' },
-                (payload) => {
-                    console.log('🗑️ Сообщение удалено (Realtime):', payload.old);
-                    this.removeMessage(payload.old.id);
-                    this.loadedMessageIds.delete(payload.old.id);
-                }
-            )
-            .subscribe((status) => {
-                console.log('📡 Realtime статус:', status);
-            });
-    }
-
-    markMessageAsDelivered(tempId, realId) {
-        const pendingEl = document.querySelector(`[data-message-id="${tempId}"]`);
-        if (pendingEl) {
-            pendingEl.setAttribute('data-message-id', realId);
-            pendingEl.classList.remove('message-pending');
-            
-            const timeEl = pendingEl.querySelector('.message-time');
-            if (timeEl) {
-                timeEl.textContent = new Date().toLocaleTimeString();
-            }
-            
-            this.loadedMessageIds.add(realId);
-            this.pendingMessages.delete(tempId);
-            console.log('✅ Сообщение подтверждено:', realId);
-        }
-    }
-
-    appendMessage(msg, isPending = false) {
-        const existingMsg = document.querySelector(`[data-message-id="${msg.id}"]`);
-        if (existingMsg) return;
-
-        const isOwnMessage = msg.username === this.username;
-        
-        const messageDiv = document.createElement('div');
-        messageDiv.className = `message ${isOwnMessage ? 'message-own' : 'message-other'} ${isPending ? 'message-pending' : ''}`;
-        messageDiv.setAttribute('data-message-id', msg.id);
-        
-        let contentHtml = '';
-        
-        if (msg.image_url) {
-            contentHtml += `<img src="${msg.image_url}" class="message-image" alt="Image" loading="lazy">`;
-        }
-        
-        if (msg.content && msg.content.trim() !== '') {
-            contentHtml += `<div class="message-content">${this.escapeHtml(msg.content)}</div>`;
-        }
-        
-        messageDiv.innerHTML = `
-            <div class="message-username">${this.escapeHtml(msg.username)}</div>
-            ${contentHtml}
-            <div class="message-time">${isPending ? 'Отправка...' : new Date(msg.created_at).toLocaleTimeString()}</div>
-        `;
-
-        if (isOwnMessage && !isPending) {
-            messageDiv.addEventListener('contextmenu', (e) => {
-                e.preventDefault();
-                this.showContextMenu(e, msg.id, messageDiv);
-            });
-        }
-
-        this.messagesArea.appendChild(messageDiv);
-    }
-
-    updateMessage(msg) {
-        const messageEl = document.querySelector(`[data-message-id="${msg.id}"]`);
-        if (messageEl) {
-            const contentEl = messageEl.querySelector('.message-content');
-            if (contentEl) {
-                contentEl.textContent = msg.content;
-            }
-            const timeEl = messageEl.querySelector('.message-time');
-            if (timeEl && !timeEl.textContent.includes('(изм.)')) {
-                timeEl.textContent = timeEl.textContent + ' (изм.)';
-            }
-        }
-    }
-
-    removeMessage(messageId) {
-        const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
-        if (messageEl) {
-            messageEl.remove();
-            console.log('💬 Сообщение удалено из DOM:', messageId);
-        }
-    }
-
-    createContextMenu() {
-        const existingMenu = document.querySelector('.context-menu');
-        if (existingMenu) existingMenu.remove();
-
-        this.contextMenu = document.createElement('div');
-        this.contextMenu.className = 'context-menu';
-        this.contextMenu.innerHTML = `
-            <div class="context-menu-item" id="editMessageBtn">
-                <span>Изменить</span>
-            </div>
-            <div class="context-menu-item" id="deleteMessageBtn">
-                <span>Удалить</span>
-            </div>
-        `;
-        document.body.appendChild(this.contextMenu);
-
-        document.getElementById('editMessageBtn').addEventListener('click', () => {
-            if (this.currentMessageId) {
-                this.promptEditMessage(this.currentMessageId);
-            }
-            this.hideContextMenu();
+        console.log('🖼️ Изображение готово:', { 
+            name: file.name, 
+            size: file.size, 
+            type: file.type 
         });
-
-        document.getElementById('deleteMessageBtn').addEventListener('click', () => {
-            if (this.currentMessageId) {
-                this.deleteMessage(this.currentMessageId);
-            }
-            this.hideContextMenu();
-        });
-
-        document.addEventListener('click', (e) => {
-            if (!this.contextMenu.contains(e.target)) {
-                this.hideContextMenu();
-            }
-        });
-
-        this.messagesArea?.addEventListener('scroll', () => {
-            this.hideContextMenu();
-        });
-    }
-
-    promptEditMessage(messageId) {
-        const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
-        if (!messageEl) return;
-
-        const contentEl = messageEl.querySelector('.message-content');
-        const currentText = contentEl?.textContent || '';
-
-        const newContent = prompt('Изменить сообщение:', currentText);
-        if (newContent !== null && newContent.trim() !== '' && newContent !== currentText) {
-            this.editMessage(messageId, newContent.trim());
-        }
-    }
-
-    showContextMenu(e, messageId, messageElement) {
-        this.currentMessageId = messageId;
         
-        const menu = this.contextMenu;
-        const messageRect = messageElement.getBoundingClientRect();
-        const containerRect = this.messagesArea.getBoundingClientRect();
+        // Показываем превью если есть элемент
+        this.showImagePreview(file);
         
-        let left = messageRect.right - containerRect.left - 140;
-        let top = messageRect.top - containerRect.top;
+        // Очищаем input для повторного выбора того же файла
+        event.target.value = '';
+    }
+
+    // 🔥 Показ превью изображения
+    showImagePreview(file) {
+        const previewContainer = document.getElementById('image-preview');
+        if (!previewContainer) return;
         
-        if (left < 10) left = 10;
-        if (left + 140 > containerRect.width - 10) {
-            left = containerRect.width - 150;
-        }
-        if (top + 80 > containerRect.height) {
-            top = containerRect.height - 90;
-        }
-
-        menu.style.left = `${left}px`;
-        menu.style.top = `${top}px`;
-        menu.style.display = 'block';
-    }
-
-    hideContextMenu() {
-        if (this.contextMenu) {
-            this.contextMenu.style.display = 'none';
-        }
-        this.currentMessageId = null;
-    }
-
-    setupImageHandling() {
-        // Вставка из буфера обмена
-        this.messageInput.addEventListener('paste', (e) => {
-            const items = e.clipboardData?.items;
-            if (!items) return;
-
-            for (let item of items) {
-                if (item.type.startsWith('image/')) {
-                    e.preventDefault();
-                    const blob = item.getAsFile();
-                    this.handleImageFile(blob);
-                    break;
-                }
-            }
-        });
-
-        // Drag & Drop
-        this.messagesArea.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            this.messagesArea.style.backgroundColor = '#1a1a25';
-        });
-
-        this.messagesArea.addEventListener('dragleave', (e) => {
-            e.preventDefault();
-            this.messagesArea.style.backgroundColor = '';
-        });
-
-        this.messagesArea.addEventListener('drop', (e) => {
-            e.preventDefault();
-            this.messagesArea.style.backgroundColor = '';
-            
-            const files = e.dataTransfer?.files;
-            if (files && files.length > 0) {
-                const file = files[0];
-                if (file.type.startsWith('image/')) {
-                    this.handleImageFile(file);
-                }
-            }
-        });
-    }
-
-    handleImageFile(file) {
         const reader = new FileReader();
         reader.onload = (e) => {
-            // 🔹 Сохраняем И base64 для превью, И blob для загрузки
-            this.currentImage = e.target.result;
-            this.currentImageBlob = file;
+            previewContainer.innerHTML = `
+                <div class="preview-wrapper">
+                    <img src="${e.target.result}" alt="preview" class="preview-image">
+                    <button type="button" class="preview-remove" title="Убрать">&times;</button>
+                </div>
+            `;
+            previewContainer.style.display = 'block';
             
-            console.log('🖼️ Изображение готово:', {
-                base64Length: this.currentImage?.length,
-                blobSize: (this.currentImageBlob?.size / 1024).toFixed(2) + ' KB',
-                type: this.currentImageBlob?.type
+            previewContainer.querySelector('.preview-remove')?.addEventListener('click', () => {
+                this.clearPendingImage();
             });
-            
-            this.showImagePreview(this.currentImage);
-        };
-        reader.onerror = () => {
-            console.error('❌ Ошибка чтения изображения');
         };
         reader.readAsDataURL(file);
     }
 
-    showImagePreview(imageUrl) {
-        this.clearImagePreview();
+    // 🔥 Очистка выбранного изображения
+    clearPendingImage() {
+        this.pendingImage = null;
+        this.pendingImageName = '';
+        const preview = document.getElementById('image-preview');
+        if (preview) {
+            preview.style.display = 'none';
+            preview.innerHTML = '';
+        }
+    }
 
-        this.imagePreview = document.createElement('div');
-        this.imagePreview.className = 'image-preview';
-        this.imagePreview.innerHTML = `
-            <img src="${imageUrl}" alt="Preview">
-            <button class="image-preview-remove" title="Удалить изображение">✕</button>
-        `;
+    connectWebSocket() {
+        if (!auth.getCurrentUser()) {
+            console.log('WebSocket: Пользователь не авторизован');
+            return;
+        }
 
-        const inputPanel = document.querySelector('.message-input-panel');
-        inputPanel.parentNode.insertBefore(this.imagePreview, inputPanel);
+        if (this.socket) {
+            this.socket.close();
+        }
 
-        this.imagePreview.querySelector('.image-preview-remove').addEventListener('click', () => {
-            this.clearImagePreview();
+        try {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws`;
+            
+            console.log('Подключаемся к WebSocket:', wsUrl);
+            this.socket = new WebSocket(wsUrl);
+            
+            this.socket.onopen = () => {
+                console.log('WebSocket connected successfully');
+                this.reconnectAttempts = 0;
+                
+                this.socket.send(JSON.stringify({
+                    type: 'authenticate',
+                    userId: auth.getCurrentUser().id
+                }));
+                
+                this.updateWebSocketStatus(true);
+                this.processMessageQueue();
+            };
+            
+            this.socket.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    console.log('WebSocket message received:', data);
+                    this.handleWebSocketMessage(data);
+                } catch (error) {
+                    console.error('WebSocket message error:', error);
+                }
+            };
+            
+            this.socket.onclose = (event) => {
+                console.log('WebSocket disconnected:', event.code, event.reason);
+                this.updateWebSocketStatus(false);
+                
+                if (this.reconnectAttempts < this.maxReconnectAttempts) {
+                    const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000);
+                    console.log(`WebSocket: Переподключение через ${delay}ms...`);
+                    
+                    setTimeout(() => {
+                        this.reconnectAttempts++;
+                        this.connectWebSocket();
+                    }, delay);
+                }
+            };
+            
+            this.socket.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                this.updateWebSocketStatus(false);
+            };
+
+            if (this.pingInterval) {
+                clearInterval(this.pingInterval);
+            }
+            this.pingInterval = setInterval(() => {
+                if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+                    this.socket.send(JSON.stringify({ type: 'ping' }));
+                }
+            }, 20000);
+
+        } catch (error) {
+            console.error('WebSocket connection error:', error);
+            this.updateWebSocketStatus(false);
+        }
+    }
+    
+    processMessageQueue() {
+        while (this.messageQueue.length > 0) {
+            const message = this.messageQueue.shift();
+            this.handleNewMessage(message);
+        }
+    }
+    
+    queueMessage(message) {
+        this.messageQueue.push(message);
+        if (this.messageQueue.length > 50) {
+            this.messageQueue.shift();
+        }
+    }
+
+    updateWebSocketStatus(connected) {
+        const statusElement = document.getElementById('ws-status');
+        if (statusElement) {
+            statusElement.textContent = connected ? 'Connected' : 'Disconnected';
+            statusElement.style.color = connected ? '#4cd964' : '#ff3b30';
+        }
+    }
+
+    disconnectWebSocket() {
+        if (this.pingInterval) {
+            clearInterval(this.pingInterval);
+        }
+        if (this.socket) {
+            this.socket.close();
+            this.socket = null;
+        }
+        this.updateWebSocketStatus(false);
+    }
+
+    handleWebSocketMessage(data) {
+        switch (data.type) {
+            case 'authenticated':
+                console.log('WebSocket authenticated for user:', data.userId);
+                this.loadChats();
+                break;
+                
+            case 'message_sent':
+                console.log('Message sent confirmation:', data.message);
+                this.loadChats();
+                break;
+                
+            case 'new_message':
+                console.log('New message received:', data.message);
+                this.handleNewMessage(data.message);
+                break;
+                
+            case 'chat_messages':
+                console.log('Chat messages received:', data.chatId, data.messages.length);
+                this.handleChatMessages(data.chatId, data.messages);
+                break;
+                
+            case 'user_online':
+                console.log('User online:', data.userId);
+                this.updateUserStatus(data.userId, true);
+                break;
+                
+            case 'user_offline':
+                console.log('User offline:', data.userId);
+                this.updateUserStatus(data.userId, false);
+                break;
+                
+            case 'pong':
+                break;
+                
+            case 'error':
+                console.error('WebSocket error:', data.message);
+                break;
+        }
+    }
+
+    async loadChats(forceUpdate = false) {
+        try {
+            const response = await fetch(`${this.apiBase}/api/chats`, {
+                headers: {
+                    'Authorization': `Bearer ${auth.getToken()}`
+                }
+            });
+
+            if (response.ok) {
+                this.chats = await response.json();
+                this.renderChats();
+                
+                if (!this.currentChat && this.chats.length > 0) {
+                    const generalChat = this.chats.find(chat => chat.id === 'general-chat');
+                    if (generalChat) {
+                        this.openChat(generalChat);
+                    }
+                }
+            } else {
+                console.error('Error loading chats:', response.status);
+            }
+        } catch (error) {
+            console.error('Error loading chats:', error);
+        }
+    }
+
+    renderChats() {
+        const chatList = document.getElementById('chat-list');
+        if (!chatList) return;
+        
+        chatList.innerHTML = '';
+
+        if (this.chats.length === 0) {
+            chatList.innerHTML = '<div class="loading">Чатов пока нет</div>';
+            return;
+        }
+
+        this.chats.forEach(chat => {
+            const lastMessage = chat.lastMessage || { text: 'Нет сообщений', timestamp: new Date() };
+            const time = this.formatTime(lastMessage.timestamp);
+            const avatarText = chat.name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2);
+
+            const chatItem = document.createElement('li');
+            chatItem.className = 'chat-item';
+            chatItem.innerHTML = `
+                <div class="chat-item-photo">${avatarText}</div>
+                <div class="chat-item-info">
+                    <div class="chat-item-header">
+                        <span class="name">${chat.name}</span>
+                        <span class="time">${time}</span>
+                    </div>
+                    <div class="chat-item-message">
+                        <p>${this.escapeHtml(lastMessage.text || '')}</p>
+                    </div>
+                </div>
+            `;
+
+            chatItem.addEventListener('click', () => this.openChat(chat));
+            chatList.appendChild(chatItem);
         });
     }
 
-    clearImagePreview() {
-        if (this.imagePreview) {
-            this.imagePreview.remove();
-            this.imagePreview = null;
+    async openChat(chat) {
+        this.currentChat = chat;
+        
+        document.getElementById('chat-with-name').textContent = chat.name;
+        document.getElementById('chat-status').textContent = 'в сети';
+        document.getElementById('chat-status').className = 'status-online';
+        
+        app.showScreen('screen-chat');
+        
+        if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+            this.socket.send(JSON.stringify({
+                type: 'request_messages',
+                chatId: chat.id
+            }));
+        } else {
+            await this.loadMessages(chat.id);
         }
-        this.currentImage = null;
-        this.currentImageBlob = null;
+        
+        document.getElementById('message-input')?.focus();
     }
 
-    scrollToBottom() {
-        this.messagesArea.scrollTop = this.messagesArea.scrollHeight;
+    async loadMessages(chatId) {
+        try {
+            const response = await fetch(`${this.apiBase}/api/chats/${chatId}/messages`, {
+                headers: {
+                    'Authorization': `Bearer ${auth.getToken()}`
+                }
+            });
+
+            if (response.ok) {
+                const messages = await response.json();
+                this.renderMessages(messages);
+            } else {
+                console.error('Error loading messages:', response.status);
+                this.showErrorMessage('Ошибка загрузки сообщений');
+            }
+        } catch (error) {
+            console.error('Error loading messages:', error);
+            this.showErrorMessage('Ошибка соединения');
+        }
     }
 
+    renderMessages(messages) {
+        const chatMessages = document.getElementById('chat-messages');
+        const loadingIndicator = document.getElementById('loading-messages');
+        
+        if (loadingIndicator) {
+            loadingIndicator.style.display = 'none';
+        }
+        
+        if (!chatMessages) return;
+        
+        chatMessages.innerHTML = '';
+
+        if (messages.length === 0) {
+            chatMessages.innerHTML = '<div class="loading">Нет сообщений</div>';
+            return;
+        }
+
+        messages.forEach(message => {
+            const messageElement = this.createMessageElement(message);
+            if (message.isTemp) {
+                messageElement.classList.add('temp-message');
+            }
+            chatMessages.appendChild(messageElement);
+        });
+
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    createMessageElement(message) {
+        const container = document.createElement('div');
+        const isSent = message.senderId === auth.getCurrentUser().id;
+        
+        container.className = `chat-message-container ${isSent ? 'sent' : 'received'}`;
+        container.setAttribute('data-message-id', message.id);
+        
+        const time = this.formatTime(message.timestamp);
+        const senderName = message.sender ? message.sender.fullname : 'Неизвестный';
+        const avatarText = message.sender ? 
+            message.sender.fullname.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2) : 
+            '??';
+
+        // 🔥 Рендер изображения если есть
+        const imageHtml = message.image ? `
+            <div class="message-image">
+                <img src="${message.image}" alt="${message.imageName || 'Изображение'}" 
+                     class="chat-image" loading="lazy" style="max-width: 100%; border-radius: 12px; margin: 4px 0;">
+                ${message.imageName ? `<span class="image-name" style="font-size: 11px; color: #8e8e93; display: block;">${this.escapeHtml(message.imageName)}</span>` : ''}
+            </div>
+        ` : '';
+
+        const textHtml = message.text ? `<div class="message-text">${this.escapeHtml(message.text)}</div>` : '';
+
+        if (isSent) {
+            container.innerHTML = `
+                <div class="chat-message-bubble" style="display: flex; flex-direction: column; align-items: flex-end;">
+                    ${imageHtml}
+                    ${textHtml}
+                </div>
+                <div class="chat-message-time">${time}</div>
+            `;
+        } else {
+            container.innerHTML = `
+                <div class="message-sender-info">
+                    <div class="message-avatar">${avatarText}</div>
+                    <div class="message-content">
+                        <div class="sender-name">${senderName}</div>
+                        <div class="chat-message-bubble" style="display: flex; flex-direction: column; align-items: flex-start;">
+                            ${imageHtml}
+                            ${textHtml}
+                        </div>
+                        <div class="chat-message-time">${time}</div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        return container;
+    }
+    
     escapeHtml(text) {
+        if (!text) return '';
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
     }
+    
+    addMessageToChat(message) {
+        const messageElement = this.createMessageElement(message);
+        const chatMessages = document.getElementById('chat-messages');
+        if (chatMessages) {
+            chatMessages.appendChild(messageElement);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+    }
 
-    setupEventListeners() {
-        this.sendButton?.addEventListener('click', () => this.sendMessage());
+    // 🔥 Основная функция отправки с поддержкой изображений
+    async sendMessage() {
+        const input = document.getElementById('message-input');
+        const sendButton = document.getElementById('send-message');
+        const text = input?.value.trim() || '';
+
+        // 🔥 Проверка: есть ли контент (текст ИЛИ изображение)
+        const hasContent = text.length > 0;
+        const hasImage = !!this.pendingImage;
         
-        this.messageInput?.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                this.sendMessage();
+        console.log('🔍 Проверка перед отправкой:', {
+            hasContent,
+            hasImage,
+            hasImageBlob: this.pendingImage instanceof Blob,
+            contentLength: text.length,
+            imageLength: this.pendingImage?.size
+        });
+
+        if (!hasContent && !hasImage) {
+            console.warn('⚠️ Нет контента для отправки (ни текста, ни изображения)');
+            return;
+        }
+
+        if (!this.currentChat) {
+            console.warn('⚠️ Нет активного чата');
+            return;
+        }
+
+        // Блокируем интерфейс
+        if (input) input.disabled = true;
+        if (sendButton) sendButton.disabled = true;
+        if (input) input.classList.add('sending');
+        
+        try {
+            const messageText = text;
+            const imageBlob = this.pendingImage;
+            const imageName = this.pendingImageName;
+            
+            // Очищаем поля ввода сразу
+            if (input) input.value = '';
+            this.clearPendingImage();
+            
+            if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+                await this.sendMessageViaWebSocket(messageText, imageBlob, imageName);
+            } else {
+                console.log('WebSocket not connected, using HTTP');
+                const message = await this.sendMessageViaHTTP(messageText, imageBlob, imageName);
+                this.addMessageToChat(message);
+            }
+            
+        } catch (error) {
+            console.error('Error sending message:', error);
+            this.showErrorMessage('Ошибка отправки сообщения');
+        } finally {
+            if (input) input.disabled = false;
+            if (sendButton) sendButton.disabled = false;
+            if (input) input.classList.remove('sending');
+            if (input) input.focus();
+        }
+    }
+    
+    // 🔥 Отправка через WebSocket (изображение как base64)
+    async sendMessageViaWebSocket(text, imageBlob, imageName) {
+        let imageData = null;
+        
+        if (imageBlob) {
+            imageData = await this.blobToBase64(imageBlob);
+        }
+        
+        const payload = {
+            type: 'send_message',
+            chatId: this.currentChat.id,
+            text: text,
+            image: imageData,
+            imageName: imageName
+        };
+        
+        this.socket.send(JSON.stringify(payload));
+        
+        // Показываем локальное сообщение для мгновенного отклика
+        const tempMessage = {
+            id: 'temp-' + Date.now(),
+            text: text,
+            image: imageData,
+            imageName: imageName,
+            chatId: this.currentChat.id,
+            senderId: auth.getCurrentUser().id,
+            timestamp: new Date().toISOString(),
+            sender: {
+                id: auth.getCurrentUser().id,
+                username: auth.getCurrentUser().username,
+                fullname: auth.getCurrentUser().fullname
+            },
+            isTemp: true
+        };
+        
+        this.addMessageToChat(tempMessage);
+    }
+    
+    // 🔥 Отправка через HTTP с FormData
+    async sendMessageViaHTTP(text, imageBlob, imageName) {
+        const formData = new FormData();
+        formData.append('text', text || '');
+        
+        if (imageBlob) {
+            formData.append('image', imageBlob, imageName);
+        }
+        
+        const response = await fetch(`${this.apiBase}/api/chats/${this.currentChat.id}/messages`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${auth.getToken()}`
+                // Content-Type не устанавливаем — браузер добавит boundary автоматически
+            },
+            body: formData
+        });
+
+        if (!response.ok) {
+            const errorData = await response.text().catch(() => null);
+            throw new Error(`HTTP send failed: ${response.status} ${errorData || ''}`);
+        }
+
+        return await response.json();
+    }
+    
+    // 🔥 Вспомогательная функция: Blob → base64
+    blobToBase64(blob) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+        });
+    }
+    
+    showErrorMessage(text) {
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'error-message';
+        errorDiv.textContent = text;
+        errorDiv.style.cssText = `
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #ff3b30;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 10px;
+            z-index: 1000;
+        `;
+        
+        document.body.appendChild(errorDiv);
+        
+        setTimeout(() => {
+            document.body.removeChild(errorDiv);
+        }, 3000);
+    }
+
+    handleNewMessage(message) {
+        const existingMessage = document.querySelector(`[data-message-id="${message.id}"]`);
+        if (existingMessage) {
+            console.log('Message already exists, skipping');
+            return;
+        }
+        
+        if (this.currentChat && message.chatId === this.currentChat.id) {
+            this.addMessageToChat(message);
+        }
+        
+        this.loadChats();
+    }
+    
+    handleChatMessages(chatId, messages) {
+        if (this.currentChat && this.currentChat.id === chatId) {
+            this.renderMessages(messages);
+        }
+    }
+
+    showChatList() {
+        app.showScreen('screen-main');
+        this.currentChat = null;
+        this.loadChats();
+    }
+
+    toggleSearch() {
+        const searchContainer = document.getElementById('search-container');
+        if (!searchContainer) return;
+        
+        const isVisible = searchContainer.style.display === 'block';
+        searchContainer.style.display = isVisible ? 'none' : 'block';
+        
+        if (!isVisible) {
+            document.getElementById('chat-search')?.focus();
+        }
+    }
+
+    searchChats(query) {
+        const chatItems = document.querySelectorAll('.chat-item');
+        const searchTerm = query.toLowerCase();
+        
+        chatItems.forEach(item => {
+            const name = item.querySelector('.name')?.textContent.toLowerCase() || '';
+            const message = item.querySelector('.chat-item-message p')?.textContent.toLowerCase() || '';
+            
+            if (name.includes(searchTerm) || message.includes(searchTerm)) {
+                item.style.display = 'flex';
+            } else {
+                item.style.display = 'none';
             }
         });
     }
-}
 
-document.addEventListener('DOMContentLoaded', () => {
-    window.chatManager = new ChatManager();
-});
+    filterChats(filter) {
+        document.querySelectorAll('.chat-list-tab').forEach(tab => {
+            tab.classList.remove('active');
+        });
+        document.querySelector(`[data-tab="${filter}"]`)?.classList.add('active');
+        this.renderChats();
+    }
+
+    updateUserStatus(userId, isOnline) {
+        if (this.currentChat && this.currentChat.participants?.includes(userId)) {
+            const statusElement = document.getElementById('chat-status');
+            if (statusElement) {
+                statusElement.textContent = isOnline ? 'в сети' : 'не в сети';
+                statusElement.className = isOnline ? 'status-online' : 'status-offline';
+            }
+        }
+    }
+
+    formatTime(timestamp) {
+        const date = new Date(timestamp);
+        const now = new Date();
+        const diff = now - date;
+        
+        if (diff < 24 * 60 * 60 * 1000) {
+            return date.toLocaleTimeString('ru-RU', { 
+                hour: '2-digit', 
+                minute: '2-digit' 
+            });
+        } 
+        else if (diff < 48 * 60 * 60 * 1000) {
+            return `вчера в ${date.toLocaleTimeString('ru-RU', { 
+                hour: '2-digit', 
+                minute: '2-digit' 
+            })}`;
+        }
+        else {
+            return date.toLocaleDateString('ru-RU', { 
+                day: 'numeric',
+                month: 'short',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
+    }
+}
